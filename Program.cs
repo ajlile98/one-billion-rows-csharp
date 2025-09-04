@@ -17,17 +17,17 @@ var parser = serviceProvider.GetRequiredService<IParser>();
 
 
 // Parsing
-string filename = "./1brc/measurements_100_000_000.txt";
+string filename = "./1brc/measurements_1_000_000_000.txt";
 // filename = "./1brc/measurements.txt";
 var start = DateTime.Now;
 var records = await parser.Parse(filename);
-Console.WriteLine(records.Count());
 var end = DateTime.Now;
 Console.WriteLine($"Parsing Completed in {(end - start).TotalMilliseconds} ms\n");
+Console.WriteLine(records.Count());
 
 // Analysis
-var analyzer = serviceProvider.GetRequiredService<IAnalyzer>();
-start = DateTime.Now;
-analyzer.Analyze(records);
-end = DateTime.Now;
-Console.WriteLine($"Analysis Completed in {(end - start).TotalMilliseconds} ms");
+// var analyzer = serviceProvider.GetRequiredService<IAnalyzer>();
+// start = DateTime.Now;
+// analyzer.Analyze(records);
+// end = DateTime.Now;
+// Console.WriteLine($"Analysis Completed in {(end - start).TotalMilliseconds} ms");

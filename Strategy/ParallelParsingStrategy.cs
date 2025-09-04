@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.Collections;
 using System.IO.MemoryMappedFiles;
 using System.Threading.Tasks;
@@ -13,9 +14,10 @@ public class ParallelParsingStrategy : IParser
     public async Task<IEnumerable<WeatherRecord>> Parse(string filename)
     {
         var records = new List<WeatherRecord> { };
+        long chunkSizeBytes = 64 * 1024 * 1024;
 
         // Split file into x chunks based on filesize
-        var ChunkBytes = GetFileChunks(filename).ToList();
+        var ChunkBytes = GetFileChunks(filename, chunkSizeBytes).ToList();
 
         // parallelize the data load
         using (var mmf = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, "WeatherRecordFile"))
@@ -40,16 +42,16 @@ public class ParallelParsingStrategy : IParser
         // return
         return records;
     }
-    private IEnumerable<long> GetFileChunks(string filename)
+    private IEnumerable<long> GetFileChunks(string filename, long chunkSize)
     {
         Console.WriteLine("GetFileChunks()");
         var chunkBytesStart = new List<long> { };
-        int chunks = Environment.ProcessorCount * 2;
+
         FileInfo fileInfo = new FileInfo(filename);
         long fileSizeInBytes = fileInfo.Length;
-        long chunkSize = fileSizeInBytes / chunks;
         Console.WriteLine(fileSizeInBytes);
-        // long curr = 0;
+        int chunks = (int)(fileSizeInBytes / chunkSize);
+
         using (FileStream fs = new FileStream(filename, FileMode.Open, FileAccess.Read))
         {
             for (int i = 0; i < chunks; i++)
@@ -79,25 +81,35 @@ public class ParallelParsingStrategy : IParser
     }
     private IEnumerable<WeatherRecord> ParseChunkFromMemoryMap(MemoryMappedFile mmf, long byteStart, long byteEnd)
     {
-        var records = new List<WeatherRecord>();
+        int estimatedCapacity = (int)((byteEnd - byteStart) / 27);
+        var records = new List<WeatherRecord>(estimatedCapacity);
         var chunkSize = (int)(byteEnd - byteStart);
-        // using (FileStream fs = new FileStream(filename, FileMode.Open, FileAccess.Read))
+
+        var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
         using (var accessor = mmf.CreateViewAccessor(byteStart, byteEnd - byteStart))
         {
-            // fs.Seek(byteStart, SeekOrigin.Begin);
-
-            byte[] buffer = new byte[chunkSize];
-            // await fs.ReadExactlyAsync(buffer, 0, buffer.Length);
             accessor.ReadArray(0, buffer, 0, chunkSize);
-            string text = System.Text.Encoding.UTF8.GetString(buffer);
-            // Console.WriteLine($"Text: {text}");
-            foreach (var line in text.Split('\n'))
+            int lineStart = 0;
+            for (int i = 0; i < buffer.Length; i++)
             {
-                if (string.IsNullOrEmpty(line))
+                if (buffer[i] == 10) // newline
                 {
-                    continue;
+                    if (i > lineStart) // skip empty lines
+                    {
+                        var record = ParseLineFromBytes(buffer, lineStart, i);
+                        if (record != null)
+                            records.Add(record);
+                    }
+                    lineStart = i + 1;
                 }
-                records.Add(ParseWeatherRecord(line));
+            }
+            
+            // Handle last line if no trailing newline
+            if (lineStart < buffer.Length)
+            {
+                var record = ParseLineFromBytes(buffer, lineStart, buffer.Length);
+                if (record != null)
+                    records.Add(record);
             }
         }
         return records;
@@ -119,4 +131,58 @@ public class ParallelParsingStrategy : IParser
             throw;
         }
     }
+
+    private WeatherRecord? ParseLineFromBytes(byte[] buffer, int start, int end)
+    {
+        // Find semicolon without string operations
+        int semicolonIndex = -1;
+        for (int i = start; i < end; i++)
+        {
+            if (buffer[i] == 59) // semicolon ASCII
+            {
+                semicolonIndex = i;
+                break;
+            }
+        }
+        
+        if (semicolonIndex == -1) return null;
+        
+        // Extract city name
+        var city = System.Text.Encoding.UTF8.GetString(buffer, start, semicolonIndex - start);
+
+        // Parse temperature directly from bytes
+        return new WeatherRecord(city, ParseTemperature(buffer, semicolonIndex + 1, end - semicolonIndex - 1));
+    }
+
+    private double ParseTemperature(byte[] buffer, int start, int end)
+    {
+        double result = 0;
+        double sign = 1;
+        bool foundDecimal = false;
+        double decimalMultiplier = 0.1;
+
+        for (int i = start; i < end; i++)
+        {
+            byte b = buffer[i];
+            if (b == 45) // '-'
+                sign = -1;
+            else if (b == 46) // '.'
+                foundDecimal = true;
+            else if (b >= 48 && b <= 57) // '0'-'9'
+            {
+                if (foundDecimal)
+                {
+                    result += (b - 48) * decimalMultiplier;
+                    decimalMultiplier *= 0.1;
+                }
+                else
+                {
+                    result = result * 10 + (b - 48);
+                }
+            }
+        }
+        return result * sign;
+    }
+
+    
 }
