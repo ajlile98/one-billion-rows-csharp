@@ -5,13 +5,13 @@ namespace one_billion_rows_csharp.Strategy;
 
 public class BasicParsingStrategy : IParser
 {
-    public IEnumerable<WeatherRecordType> Parse(string filename)
+    public async Task<IEnumerable<WeatherRecordType>> Parse(string filename)
     {
         var records = new List<WeatherRecordType> { };
         try
         {
             using StreamReader reader = new(filename);
-            var line = reader.ReadLine();
+            var line = await reader.ReadLineAsync();
             var index = 0;
             while (line != null)
             {

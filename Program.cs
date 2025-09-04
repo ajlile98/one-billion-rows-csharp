@@ -7,6 +7,7 @@ using one_billion_rows_csharp.Strategy;
 var serviceCollection = new ServiceCollection();
 
 serviceCollection.AddSingleton<IParser, BasicParsingStrategy>();
+serviceCollection.AddSingleton<IParser, ParallelParsingStrategy>();
 
 serviceCollection.AddSingleton<IAnalyzer, WeatherRecordAnalyzer>();
 
@@ -19,7 +20,7 @@ var parser = serviceProvider.GetRequiredService<IParser>();
 string filename = "./1brc/measurements_100_000_000.txt";
 // filename = "./1brc/measurements.txt";
 var start = DateTime.Now;
-var records = parser.Parse(filename);
+var records = await parser.Parse(filename);
 Console.WriteLine(records.Count());
 var end = DateTime.Now;
 Console.WriteLine($"Parsing Completed in {(end - start).TotalMilliseconds} ms\n");
