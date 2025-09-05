@@ -9,12 +9,13 @@ using one_billion_rows_csharp.Records;
 
 namespace one_billion_rows_csharp.Strategy;
 
-public class ParallelParsingStrategy : IParser
+public class ParallelAggregateParsingStrategy : IAggregateParser 
 {
-    public async Task<IEnumerable<WeatherRecord>> Parse(string filename)
+    public async Task<Dictionary<string, WeatherStats>> AggregateParseAsync(string filename)
     {
-        var records = new List<WeatherRecord> { };
+        // var records = new List<WeatherRecord> { };
         long chunkSizeBytes = 128 * 1024 * 1024;
+        var stats = new Dictionary<string, WeatherStats>();
 
         // Split file into x chunks based on filesize
         var ChunkBytes = GetFileChunks(filename, chunkSizeBytes).ToList();
@@ -22,7 +23,7 @@ public class ParallelParsingStrategy : IParser
         // parallelize the data load
         using (var mmf = MemoryMappedFile.CreateFromFile(filename, FileMode.Open, "WeatherRecordFile"))
         {
-            var tasks = new List<Task<IEnumerable<WeatherRecord>>>();
+            var tasks = new List<Task<Dictionary<string, WeatherStats>>>();
             for (int i = 0; i < ChunkBytes.Count() - 1; i++)
             {
                 var byteStart = ChunkBytes[i];
@@ -35,12 +36,20 @@ public class ParallelParsingStrategy : IParser
             var results = await Task.WhenAll(tasks);
             foreach (var result in results)
             {
-                records.AddRange(result);
+                // records.AddRange(result);
+                foreach (var city in result.Keys)
+                {
+                    if (!stats.ContainsKey(city))
+                    {
+                        stats.Add(city, new WeatherStats());
+                    }
+                    stats[city].Merge(result[city]);
+                }
             }
         }
 
-        // return
-        return records;
+        // return records;
+        return stats;
     }
     private IEnumerable<long> GetFileChunks(string filename, long chunkSize)
     {
@@ -79,11 +88,12 @@ public class ParallelParsingStrategy : IParser
         return chunkBytesStart;
 
     }
-    private IEnumerable<WeatherRecord> ParseChunkFromMemoryMap(MemoryMappedFile mmf, long byteStart, long byteEnd)
+    private Dictionary<string, WeatherStats> ParseChunkFromMemoryMap(MemoryMappedFile mmf, long byteStart, long byteEnd)
     {
         int estimatedCapacity = (int)((byteEnd - byteStart) / 27);
-        var records = new List<WeatherRecord>(estimatedCapacity);
+        // var records = new List<WeatherRecord>(estimatedCapacity);
         var chunkSize = (int)(byteEnd - byteStart);
+        var stats = new Dictionary<string, WeatherStats>();
 
         var buffer = ArrayPool<byte>.Shared.Rent(chunkSize);
         using (var accessor = mmf.CreateViewAccessor(byteStart, byteEnd - byteStart))
@@ -97,8 +107,15 @@ public class ParallelParsingStrategy : IParser
                     if (i > lineStart) // skip empty lines
                     {
                         var record = ParseLineFromBytes(buffer, lineStart, i);
-                        if (record != null)
-                            records.Add(record);
+                        if (record != null) {
+                            // records.Add(record);
+                            if (!stats.ContainsKey(record.City))
+                            {
+                                stats.Add(record.City, new WeatherStats());
+                            }
+                            stats[record.City].Update(record.Temp);
+                            // Console.WriteLine($"{record.City}/{record.Temp} stats: {stats[record.City]}");
+                        }
                     }
                     lineStart = i + 1;
                 }
@@ -109,27 +126,19 @@ public class ParallelParsingStrategy : IParser
             {
                 var record = ParseLineFromBytes(buffer, lineStart, buffer.Length);
                 if (record != null)
-                    records.Add(record);
+                {
+                    // records.Add(record);
+                    if (!stats.ContainsKey(record.City))
+                    {
+                        stats.Add(record.City, new WeatherStats());
+                    }
+                    stats[record.City].Update(record.Temp);
+
+                }
             }
         }
-        return records;
-    }
-    private WeatherRecord ParseWeatherRecord(string line)
-    {
-        var split_line = line.Split(";");
-        try
-        {
-            return new WeatherRecord(
-                City: split_line[0],
-                Temp: Convert.ToDouble(split_line[1])
-            );
-        }
-        catch (System.Exception)
-        {
-            Console.WriteLine($"line: '{line}'");
-            Console.WriteLine($"split_line: {split_line}");
-            throw;
-        }
+        // return records;
+        return stats;
     }
 
     private WeatherRecord? ParseLineFromBytes(byte[] buffer, int start, int end)
@@ -181,8 +190,9 @@ public class ParallelParsingStrategy : IParser
                 }
             }
         }
+
+        // var str = System.Text.Encoding.UTF8.GetString(buffer, start, length);
+        // Console.WriteLine($"'{str}' result: {result * sign}");
         return result * sign;
     }
-
-    
 }
